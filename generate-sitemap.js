@@ -16,7 +16,9 @@ const CONFIG = {
 
 async function fetchAllJobs() {
   const allJobs = [];
+  const seenIds = new Set(); // Track IDs to prevent duplicates
   let offset = 0;
+  let consecutiveEmptyOrDuplicate = 0; // Track if we're getting duplicates
   const limit = 100; // Request 100, but Appwrite might return fewer
 
   console.log("Starting to fetch jobs from Appwrite...");
@@ -24,7 +26,9 @@ async function fetchAllJobs() {
   while (true) {
     const url = `${CONFIG.APPWRITE_ENDPOINT}/databases/${CONFIG.DATABASE_ID}/collections/${CONFIG.COLLECTION_ID}/documents?limit=${limit}&offset=${offset}`;
 
-    console.log(`Fetching batch: offset=${offset}, limit=${limit}`);
+    if (allJobs.length % 1000 === 0 || allJobs.length < 100) {
+      console.log(`Fetching batch: offset=${offset}, limit=${limit}`);
+    }
 
     try {
       const response = await fetch(url, {
@@ -44,32 +48,65 @@ async function fetchAllJobs() {
 
       const data = await response.json();
 
-      // CRITICAL: Stop only when we get 0 documents
-      // Don't trust data.total - it might be capped at 5000
+      // Stop if we get 0 documents
       if (!data.documents || data.documents.length === 0) {
         console.log(
-          `✓ No more documents. Finished with ${allJobs.length} total jobs`,
+          `✓ No more documents. Finished with ${allJobs.length} unique jobs`,
         );
         break;
       }
 
+      // Check for duplicates in this batch
+      let newDocsInBatch = 0;
+      for (const doc of data.documents) {
+        const id = doc.$id;
+        if (!seenIds.has(id)) {
+          seenIds.add(id);
+          allJobs.push(doc);
+          newDocsInBatch++;
+        }
+      }
+
+      // If we got no new documents in this batch, we're past the end
+      if (newDocsInBatch === 0) {
+        consecutiveEmptyOrDuplicate++;
+        console.log(
+          `⚠ Batch had 0 new documents (${consecutiveEmptyOrDuplicate} consecutive duplicate batches)`,
+        );
+
+        // Stop if we get 3 consecutive batches with no new documents
+        if (consecutiveEmptyOrDuplicate >= 3) {
+          console.log(
+            `✓ Stopped at ${allJobs.length} unique jobs (no new documents in ${consecutiveEmptyOrDuplicate} batches)`,
+          );
+          break;
+        }
+      } else {
+        consecutiveEmptyOrDuplicate = 0; // Reset counter
+      }
+
       const batchSize = data.documents.length;
-      allJobs.push(...data.documents);
 
       // Log progress every 1000 jobs
       if (allJobs.length % 1000 === 0 || allJobs.length < 1000) {
         console.log(
-          `Fetched ${allJobs.length} jobs so far (batch size: ${batchSize}, API total: ${data.total || "unknown"})`,
+          `Fetched ${allJobs.length} unique jobs so far (batch: ${batchSize}, new: ${newDocsInBatch}, API total: ${data.total || "unknown"})`,
         );
       }
 
-      // Move offset by how many we actually got
+      // Move offset by how many documents Appwrite returned (not how many were new)
       offset += batchSize;
 
       // Safety limit - adjust this if you have more than 100k jobs
       if (allJobs.length >= 100000) {
+        console.warn(`⚠ Reached safety limit of 100k unique jobs.`);
+        break;
+      }
+
+      // Also stop if offset gets unreasonably high (indicates we're looping)
+      if (offset > 200000) {
         console.warn(
-          `⚠ Reached safety limit of 100k jobs. If you have more, increase this limit.`,
+          `⚠ Offset reached ${offset}, stopping to prevent infinite loop`,
         );
         break;
       }
@@ -79,7 +116,7 @@ async function fetchAllJobs() {
     }
   }
 
-  console.log(`Finished fetching. Total jobs: ${allJobs.length}`);
+  console.log(`Finished fetching. Total unique jobs: ${allJobs.length}`);
   return allJobs;
 }
 
