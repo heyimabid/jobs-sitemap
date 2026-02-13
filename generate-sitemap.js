@@ -17,7 +17,7 @@ const CONFIG = {
 async function fetchAllJobs() {
   const allJobs = [];
   let offset = 0;
-  const limit = 100; // GitHub Actions has no limit!
+  const limit = 100; // Request 100, but Appwrite might return fewer
 
   console.log("Starting to fetch jobs from Appwrite...");
 
@@ -44,33 +44,33 @@ async function fetchAllJobs() {
 
       const data = await response.json();
 
+      // CRITICAL: Stop only when we get 0 documents
+      // Don't trust data.total - it might be capped at 5000
       if (!data.documents || data.documents.length === 0) {
-        console.log("No more documents to fetch");
+        console.log(
+          `✓ No more documents. Finished with ${allJobs.length} total jobs`,
+        );
         break;
       }
 
+      const batchSize = data.documents.length;
       allJobs.push(...data.documents);
-      console.log(
-        `Fetched ${allJobs.length} jobs so far (total: ${data.total || "unknown"})`,
-      );
 
-      // Check if we got all documents
-      if (data.total && allJobs.length >= data.total) {
-        console.log(`Fetched all ${data.total} documents`);
-        break;
+      // Log progress every 1000 jobs
+      if (allJobs.length % 1000 === 0 || allJobs.length < 1000) {
+        console.log(
+          `Fetched ${allJobs.length} jobs so far (batch size: ${batchSize}, API total: ${data.total || "unknown"})`,
+        );
       }
 
-      // If we got fewer than requested, we're done
-      if (data.documents.length < limit) {
-        console.log("Received fewer documents than limit, finishing");
-        break;
-      }
+      // Move offset by how many we actually got
+      offset += batchSize;
 
-      offset += limit;
-
-      // Safety limit
+      // Safety limit - adjust this if you have more than 100k jobs
       if (allJobs.length >= 100000) {
-        console.log("Safety limit reached");
+        console.warn(
+          `⚠ Reached safety limit of 100k jobs. If you have more, increase this limit.`,
+        );
         break;
       }
     } catch (error) {
