@@ -184,7 +184,7 @@ async function main() {
 
     // Write metadata
     const metadata = {
-      generatedAt: now,
+      generatedAt: new Date().toISOString(), // FIXED: use Date directly
       totalJobs: jobs.length,
       validJobs: jobs.filter((j) => j.slug).length,
       staticPages: STATIC_PAGES.length,
