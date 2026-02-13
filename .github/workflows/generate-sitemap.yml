@@ -4,7 +4,7 @@ name: Generate Jobs Sitemap
 on:
   # Run every hour
   schedule:
-    - cron: '0 * * * *'  # Every hour at minute 0
+    - cron: '0 0 * * *'  # Every hour at minute 0
   
   # Allow manual trigger
   workflow_dispatch:
