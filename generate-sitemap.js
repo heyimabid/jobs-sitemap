@@ -1,8 +1,10 @@
 // generate-sitemap.js
 // Run this script in GitHub Actions to generate sitemap
+// Uses Appwrite SDK for reliable cursor pagination
 
 const fs = require("fs");
 const path = require("path");
+const { Client, Databases, Query } = require("node-appwrite");
 
 const CONFIG = {
   APPWRITE_ENDPOINT:
@@ -15,133 +17,61 @@ const CONFIG = {
 };
 
 async function fetchAllJobs() {
-  const allJobs = [];
-  const seenIds = new Set(); // Track IDs to prevent duplicates
-  let offset = 0;
-  let consecutiveEmptyOrDuplicate = 0; // Track if we're getting duplicates
-  const limit = 100; // Request 100, but Appwrite might return fewer
+  // Initialize Appwrite SDK
+  const client = new Client()
+    .setEndpoint(CONFIG.APPWRITE_ENDPOINT)
+    .setProject(CONFIG.APPWRITE_PROJECT_ID)
+    .setKey(CONFIG.APPWRITE_API_KEY);
 
-  console.log("Starting to fetch jobs from Appwrite...");
-  console.log("Testing API configuration...");
+  const databases = new Databases(client);
+
+  const allJobs = [];
+  let lastId = null;
+  const limit = 100; // Appwrite max per request
+  let batchCount = 0;
+
+  console.log("Starting to fetch jobs using Appwrite SDK...");
 
   while (true) {
-    // Add orderBy to ensure consistent pagination
-    // Sort by $createdAt descending to get newest first
-    const url = `${CONFIG.APPWRITE_ENDPOINT}/databases/${CONFIG.DATABASE_ID}/collections/${CONFIG.COLLECTION_ID}/documents?limit=${limit}&offset=${offset}&orderType=DESC&orderField=$createdAt`;
-
-    if (allJobs.length % 1000 === 0 || allJobs.length < 100) {
-      console.log(`Fetching batch: offset=${offset}, limit=${limit}`);
+    const queries = [Query.orderDesc("$createdAt"), Query.limit(limit)];
+    if (lastId) {
+      queries.push(Query.cursorAfter(lastId));
     }
 
     try {
-      const response = await fetch(url, {
-        headers: {
-          "X-Appwrite-Project": CONFIG.APPWRITE_PROJECT_ID,
-          "X-Appwrite-Key": CONFIG.APPWRITE_API_KEY,
-          "Content-Type": "application/json",
-        },
-      });
+      const response = await databases.listDocuments(
+        CONFIG.DATABASE_ID,
+        CONFIG.COLLECTION_ID,
+        queries,
+      );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`API Error Response: ${errorText}`);
-        throw new Error(
-          `Appwrite API error: ${response.status} - ${errorText}`,
-        );
-      }
-
-      const data = await response.json();
-
-      // Log first batch details for debugging
-      if (offset === 0 && data.documents) {
-        console.log(
-          `First batch: got ${data.documents.length} documents, API says total: ${data.total}`,
-        );
-        if (data.documents[0]) {
-          console.log(`First document ID: ${data.documents[0].$id}`);
-        }
-      }
-
-      // Stop if we get 0 documents
-      if (!data.documents || data.documents.length === 0) {
-        console.log(
-          `✓ No more documents. Finished with ${allJobs.length} unique jobs`,
-        );
+      const documents = response.documents;
+      if (documents.length === 0) {
+        console.log("No more documents.");
         break;
       }
 
-      // Check for duplicates in this batch
-      let newDocsInBatch = 0;
-      const duplicateIds = [];
+      allJobs.push(...documents);
+      batchCount++;
+      console.log(
+        `Batch ${batchCount}: fetched ${documents.length} jobs (total: ${allJobs.length})`,
+      );
 
-      for (const doc of data.documents) {
-        const id = doc.$id;
-        if (!seenIds.has(id)) {
-          seenIds.add(id);
-          allJobs.push(doc);
-          newDocsInBatch++;
-        } else {
-          duplicateIds.push(id);
-        }
-      }
-
-      // Log duplicate info for debugging
-      if (duplicateIds.length > 0 && offset < 1000) {
-        console.log(
-          `Found ${duplicateIds.length} duplicates in batch. First few: ${duplicateIds.slice(0, 3).join(", ")}`,
-        );
-      }
-
-      // If we got no new documents in this batch, we're past the end
-      if (newDocsInBatch === 0) {
-        consecutiveEmptyOrDuplicate++;
-        console.log(
-          `⚠ Batch had 0 new documents (${consecutiveEmptyOrDuplicate} consecutive duplicate batches)`,
-        );
-
-        // Stop if we get 3 consecutive batches with no new documents
-        if (consecutiveEmptyOrDuplicate >= 3) {
-          console.log(
-            `✓ Stopped at ${allJobs.length} unique jobs (no new documents in ${consecutiveEmptyOrDuplicate} batches)`,
-          );
-          break;
-        }
-      } else {
-        consecutiveEmptyOrDuplicate = 0; // Reset counter
-      }
-
-      const batchSize = data.documents.length;
-
-      // Log progress every 1000 jobs
-      if (allJobs.length % 1000 === 0 || allJobs.length < 1000) {
-        console.log(
-          `Fetched ${allJobs.length} unique jobs so far (batch: ${batchSize}, new: ${newDocsInBatch}, API total: ${data.total || "unknown"})`,
-        );
-      }
-
-      // Move offset by how many documents Appwrite returned (not how many were new)
-      offset += batchSize;
-
-      // Safety limit - adjust this if you have more than 100k jobs
-      if (allJobs.length >= 100000) {
-        console.warn(`⚠ Reached safety limit of 100k unique jobs.`);
+      // Stop if we got less than the limit (last page)
+      if (documents.length < limit) {
+        console.log("Reached end of collection.");
         break;
       }
 
-      // Also stop if offset gets unreasonably high (indicates we're looping)
-      if (offset > 200000) {
-        console.warn(
-          `⚠ Offset reached ${offset}, stopping to prevent infinite loop`,
-        );
-        break;
-      }
+      // Set cursor to the last document's ID for the next batch
+      lastId = documents[documents.length - 1].$id;
     } catch (error) {
-      console.error(`Error fetching jobs at offset ${offset}:`, error.message);
+      console.error("Error fetching jobs:", error.message);
       throw error;
     }
   }
 
-  console.log(`Finished fetching. Total unique jobs: ${allJobs.length}`);
+  console.log(`Finished fetching. Total jobs: ${allJobs.length}`);
   return allJobs;
 }
 
