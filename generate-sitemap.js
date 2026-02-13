@@ -22,9 +22,12 @@ async function fetchAllJobs() {
   const limit = 100; // Request 100, but Appwrite might return fewer
 
   console.log("Starting to fetch jobs from Appwrite...");
+  console.log("Testing API configuration...");
 
   while (true) {
-    const url = `${CONFIG.APPWRITE_ENDPOINT}/databases/${CONFIG.DATABASE_ID}/collections/${CONFIG.COLLECTION_ID}/documents?limit=${limit}&offset=${offset}`;
+    // Add orderBy to ensure consistent pagination
+    // Sort by $createdAt descending to get newest first
+    const url = `${CONFIG.APPWRITE_ENDPOINT}/databases/${CONFIG.DATABASE_ID}/collections/${CONFIG.COLLECTION_ID}/documents?limit=${limit}&offset=${offset}&orderType=DESC&orderField=$createdAt`;
 
     if (allJobs.length % 1000 === 0 || allJobs.length < 100) {
       console.log(`Fetching batch: offset=${offset}, limit=${limit}`);
@@ -41,12 +44,23 @@ async function fetchAllJobs() {
 
       if (!response.ok) {
         const errorText = await response.text();
+        console.error(`API Error Response: ${errorText}`);
         throw new Error(
           `Appwrite API error: ${response.status} - ${errorText}`,
         );
       }
 
       const data = await response.json();
+
+      // Log first batch details for debugging
+      if (offset === 0 && data.documents) {
+        console.log(
+          `First batch: got ${data.documents.length} documents, API says total: ${data.total}`,
+        );
+        if (data.documents[0]) {
+          console.log(`First document ID: ${data.documents[0].$id}`);
+        }
+      }
 
       // Stop if we get 0 documents
       if (!data.documents || data.documents.length === 0) {
@@ -58,13 +72,24 @@ async function fetchAllJobs() {
 
       // Check for duplicates in this batch
       let newDocsInBatch = 0;
+      const duplicateIds = [];
+
       for (const doc of data.documents) {
         const id = doc.$id;
         if (!seenIds.has(id)) {
           seenIds.add(id);
           allJobs.push(doc);
           newDocsInBatch++;
+        } else {
+          duplicateIds.push(id);
         }
+      }
+
+      // Log duplicate info for debugging
+      if (duplicateIds.length > 0 && offset < 1000) {
+        console.log(
+          `Found ${duplicateIds.length} duplicates in batch. First few: ${duplicateIds.slice(0, 3).join(", ")}`,
+        );
       }
 
       // If we got no new documents in this batch, we're past the end
