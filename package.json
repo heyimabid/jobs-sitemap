@@ -1,0 +1,12 @@
+{
+  "name": "jobs-sitemap-generator",
+  "version": "1.0.0",
+  "description": "Generate jobs sitemap for hiredup.me",
+  "main": "generate-sitemap.js",
+  "scripts": {
+    "generate": "node generate-sitemap.js"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}

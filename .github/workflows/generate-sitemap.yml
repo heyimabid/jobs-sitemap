@@ -1,0 +1,48 @@
+# .github/workflows/generate-sitemap.yml
+name: Generate Jobs Sitemap
+
+on:
+  # Run every hour
+  schedule:
+    - cron: '0 * * * *'  # Every hour at minute 0
+  
+  # Allow manual trigger
+  workflow_dispatch:
+  
+  # Run on push to main (optional)
+  push:
+    branches:
+      - main
+
+jobs:
+  generate-sitemap:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install dependencies
+        run: npm install node-fetch
+      
+      - name: Generate sitemap
+        env:
+          APPWRITE_ENDPOINT: ${{ secrets.APPWRITE_ENDPOINT }}
+          APPWRITE_PROJECT_ID: ${{ secrets.APPWRITE_PROJECT_ID }}
+          APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
+          DATABASE_ID: ${{ secrets.DATABASE_ID }}
+          COLLECTION_ID: ${{ secrets.COLLECTION_ID }}
+        run: node generate-sitemap.js
+      
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          publish_branch: gh-pages
+          force_orphan: true
