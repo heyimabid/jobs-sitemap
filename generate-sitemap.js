@@ -1,7 +1,7 @@
 // generate-sitemap.js
 // Run this script in GitHub Actions to generate sitemap
 // Uses Appwrite SDK for reliable cursor pagination
-// Includes both static pages and dynamic job URLs
+// Includes static pages, category/location SEO pages, and dynamic job URLs
 
 const fs = require("fs");
 const path = require("path");
@@ -17,28 +17,78 @@ const CONFIG = {
   BASE_URL: "https://hiredup.me",
 };
 
-// Static pages from your sitemap.js (copied and adapted)
+// ─── Static pages ─────────────────────────────────────────────────────────────
+
 const STATIC_PAGES = [
-  { url: "", changeFrequency: "daily", priority: 1.0 },
-  { url: "/jobs", changeFrequency: "hourly", priority: 0.9 },
-  { url: "/companies", changeFrequency: "daily", priority: 0.8 },
-  { url: "/job-seekers", changeFrequency: "weekly", priority: 0.8 },
-  { url: "/employers", changeFrequency: "weekly", priority: 0.8 },
-  { url: "/talent-search", changeFrequency: "daily", priority: 0.7 },
-  { url: "/post-job", changeFrequency: "monthly", priority: 0.7 },
-  { url: "/pricing", changeFrequency: "monthly", priority: 0.6 },
-  { url: "/salary-estimator", changeFrequency: "monthly", priority: 0.7 },
-  { url: "/blog", changeFrequency: "weekly", priority: 0.7 },
-  { url: "/resources", changeFrequency: "weekly", priority: 0.6 },
-  { url: "/success-stories", changeFrequency: "weekly", priority: 0.6 },
-  { url: "/contact", changeFrequency: "monthly", priority: 0.5 },
-  { url: "/privacy", changeFrequency: "yearly", priority: 0.3 },
-  { url: "/terms", changeFrequency: "yearly", priority: 0.3 },
-  { url: "/cookies", changeFrequency: "yearly", priority: 0.3 },
+  { url: "",                    changeFrequency: "daily",   priority: 1.0 },
+  { url: "/jobs",               changeFrequency: "hourly",  priority: 0.9 },
+  { url: "/jobs/categories",    changeFrequency: "weekly",  priority: 0.85 },
+  { url: "/companies",          changeFrequency: "daily",   priority: 0.8 },
+  { url: "/job-seekers",        changeFrequency: "weekly",  priority: 0.8 },
+  { url: "/employers",          changeFrequency: "weekly",  priority: 0.8 },
+  { url: "/talent-search",      changeFrequency: "daily",   priority: 0.7 },
+  { url: "/post-job",           changeFrequency: "monthly", priority: 0.7 },
+  { url: "/pricing",            changeFrequency: "monthly", priority: 0.6 },
+  { url: "/salary-estimator",   changeFrequency: "monthly", priority: 0.7 },
+  { url: "/blog",               changeFrequency: "weekly",  priority: 0.7 },
+  { url: "/resources",          changeFrequency: "weekly",  priority: 0.6 },
+  { url: "/success-stories",    changeFrequency: "weekly",  priority: 0.6 },
+  { url: "/contact",            changeFrequency: "monthly", priority: 0.5 },
+  { url: "/privacy",            changeFrequency: "yearly",  priority: 0.3 },
+  { url: "/terms",              changeFrequency: "yearly",  priority: 0.3 },
+  { url: "/cookies",            changeFrequency: "yearly",  priority: 0.3 },
 ];
 
+// ─── Category SEO pages ───────────────────────────────────────────────────────
+// Sourced from /src/lib/job-categories.js — JOB_CATEGORIES slugs
+// These are high-value evergreen pages targeting "jobs in bangladesh" type queries
+// Priority 0.85 — just below the /jobs listing but above individual job posts
+
+const CATEGORY_SLUGS = [
+  "software-developer-jobs",
+  "it-jobs",
+  "accounting-finance-jobs",
+  "marketing-jobs",
+  "hr-jobs",
+  "sales-jobs",
+  "design-jobs",
+  "customer-service-jobs",
+  "engineering-jobs",
+  "data-analyst-jobs",
+  "remote-jobs",
+  "fresher-jobs",
+];
+
+const CATEGORY_PAGES = CATEGORY_SLUGS.map((slug) => ({
+  url: `/jobs/category/${slug}`,
+  changeFrequency: "daily",   // jobs are added daily — re-crawl often
+  priority: 0.85,
+}));
+
+// ─── Location SEO pages ───────────────────────────────────────────────────────
+// Sourced from /src/lib/job-categories.js — JOB_LOCATIONS slugs
+// Target "jobs in dhaka", "remote jobs bangladesh" etc.
+
+const LOCATION_SLUGS = [
+  "dhaka",
+  "chittagong",
+  "sylhet",
+  "rajshahi",
+  "remote-bangladesh",
+];
+
+const LOCATION_PAGES = LOCATION_SLUGS.map((slug) => ({
+  url: `/jobs/location/${slug}`,
+  changeFrequency: "daily",
+  priority: 0.80,
+}));
+
+// ─── All non-job pages combined ───────────────────────────────────────────────
+const ALL_STATIC_PAGES = [...STATIC_PAGES, ...CATEGORY_PAGES, ...LOCATION_PAGES];
+
+// ─── Appwrite fetch ───────────────────────────────────────────────────────────
+
 async function fetchAllJobs() {
-  // Initialize Appwrite SDK
   const client = new Client()
     .setEndpoint(CONFIG.APPWRITE_ENDPOINT)
     .setProject(CONFIG.APPWRITE_PROJECT_ID)
@@ -48,16 +98,14 @@ async function fetchAllJobs() {
 
   const allJobs = [];
   let lastId = null;
-  const limit = 100; // Appwrite max per request
+  const limit = 100;
   let batchCount = 0;
 
   console.log("Starting to fetch jobs using Appwrite SDK...");
 
   while (true) {
     const queries = [Query.orderDesc("$createdAt"), Query.limit(limit)];
-    if (lastId) {
-      queries.push(Query.cursorAfter(lastId));
-    }
+    if (lastId) queries.push(Query.cursorAfter(lastId));
 
     try {
       const response = await databases.listDocuments(
@@ -94,43 +142,7 @@ async function fetchAllJobs() {
   return allJobs;
 }
 
-function generateSitemapXML(jobs, staticPages) {
-  const validJobs = jobs.filter((job) => job.slug);
-  const now = new Date().toISOString();
-
-  console.log(
-    `Generating sitemap for ${validJobs.length} job URLs and ${staticPages.length} static pages`,
-  );
-
-  // Generate static page URLs
-  const staticUrlEntries = staticPages.map((page) => {
-    const fullUrl = `${CONFIG.BASE_URL}${page.url}`;
-    return `  <url>
-    <loc>${escapeXML(fullUrl)}</loc>
-    <lastmod>${now}</lastmod>
-    <changefreq>${page.changeFrequency}</changefreq>
-    <priority>${page.priority}</priority>
-  </url>`;
-  });
-
-  // Generate job URLs
-  const jobUrlEntries = validJobs.map((job) => {
-    const lastmod = job.$updatedAt || job.$createdAt || now;
-    return `  <url>
-    <loc>${CONFIG.BASE_URL}/jobs/${escapeXML(job.slug)}</loc>
-    <lastmod>${lastmod}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.8</priority>
-  </url>`;
-  });
-
-  const allUrls = [...staticUrlEntries, ...jobUrlEntries].join("\n");
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${allUrls}
-</urlset>`;
-}
+// ─── XML generation ───────────────────────────────────────────────────────────
 
 function escapeXML(str) {
   if (!str) return "";
@@ -142,66 +154,106 @@ function escapeXML(str) {
     .replace(/'/g, "&apos;");
 }
 
+function urlEntry(loc, lastmod, changefreq, priority) {
+  return `  <url>
+    <loc>${escapeXML(loc)}</loc>
+    <lastmod>${lastmod}</lastmod>
+    <changefreq>${changefreq}</changefreq>
+    <priority>${priority}</priority>
+  </url>`;
+}
+
+function generateSitemapXML(jobs, staticPages) {
+  const validJobs = jobs.filter((job) => job.slug);
+  const now = new Date().toISOString();
+
+  console.log(`\nURL breakdown:`);
+  console.log(`  Static pages:    ${STATIC_PAGES.length}`);
+  console.log(`  Category pages:  ${CATEGORY_PAGES.length}`);
+  console.log(`  Location pages:  ${LOCATION_PAGES.length}`);
+  console.log(`  Job pages:       ${validJobs.length}`);
+  console.log(`  Total:           ${staticPages.length + validJobs.length}`);
+
+  // Static + category + location pages
+  const staticEntries = staticPages.map((page) =>
+    urlEntry(
+      `${CONFIG.BASE_URL}${page.url}`,
+      now,
+      page.changeFrequency,
+      page.priority,
+    ),
+  );
+
+  // Individual job pages — use actual updatedAt for accurate freshness signal
+  const jobEntries = validJobs.map((job) => {
+    const lastmod = job.$updatedAt || job.$createdAt || now;
+    return urlEntry(
+      `${CONFIG.BASE_URL}/jobs/${job.slug}`,
+      lastmod,
+      "daily",
+      "0.8",
+    );
+  });
+
+  const allUrls = [...staticEntries, ...jobEntries].join("\n");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${allUrls}
+</urlset>`;
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
 async function main() {
   try {
     console.log("=== Sitemap Generation Started ===");
     console.log(`Time: ${new Date().toISOString()}`);
 
-    // Validate environment variables
-    const required = [
-      "APPWRITE_PROJECT_ID",
-      "APPWRITE_API_KEY",
-      "DATABASE_ID",
-      "COLLECTION_ID",
-    ];
+    const required = ["APPWRITE_PROJECT_ID", "APPWRITE_API_KEY", "DATABASE_ID", "COLLECTION_ID"];
     const missing = required.filter((key) => !CONFIG[key]);
-
     if (missing.length > 0) {
-      throw new Error(
-        `Missing required environment variables: ${missing.join(", ")}`,
-      );
+      throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
     }
 
-    // Fetch all jobs
     const jobs = await fetchAllJobs();
 
     if (jobs.length === 0) {
       throw new Error("No jobs fetched from Appwrite!");
     }
 
-    // Generate sitemap (including static pages)
-    const sitemap = generateSitemapXML(jobs, STATIC_PAGES);
+    const sitemap = generateSitemapXML(jobs, ALL_STATIC_PAGES);
 
-    // Create public directory
     const publicDir = path.join(process.cwd(), "public");
-    if (!fs.existsSync(publicDir)) {
-      fs.mkdirSync(publicDir, { recursive: true });
-    }
+    if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
 
-    // Write sitemap
     const sitemapPath = path.join(publicDir, "sitemap.xml");
     fs.writeFileSync(sitemapPath, sitemap, "utf8");
 
-    // Write metadata
     const metadata = {
-      generatedAt: new Date().toISOString(), // FIXED: use Date directly
-      totalJobs: jobs.length,
-      validJobs: jobs.filter((j) => j.slug).length,
-      staticPages: STATIC_PAGES.length,
-      totalUrls: jobs.filter((j) => j.slug).length + STATIC_PAGES.length,
-      sitemapSize: sitemap.length,
+      generatedAt: new Date().toISOString(),
+      pages: {
+        static:   STATIC_PAGES.length,
+        category: CATEGORY_PAGES.length,
+        location: LOCATION_PAGES.length,
+        jobs:     jobs.filter((j) => j.slug).length,
+        total:    ALL_STATIC_PAGES.length + jobs.filter((j) => j.slug).length,
+      },
+      sitemapSizeKB: (sitemap.length / 1024).toFixed(2),
     };
 
-    const metadataPath = path.join(publicDir, "metadata.json");
+    const metadataPath = path.join(publicDir, "sitemap-meta.json");
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), "utf8");
 
     console.log("\n=== Sitemap Generated Successfully ===");
-    console.log(`Total jobs: ${metadata.totalJobs}`);
-    console.log(`Valid jobs with slug: ${metadata.validJobs}`);
-    console.log(`Static pages: ${metadata.staticPages}`);
-    console.log(`Total URLs: ${metadata.totalUrls}`);
-    console.log(`Sitemap size: ${(metadata.sitemapSize / 1024).toFixed(2)} KB`);
-    console.log(`Saved to: ${sitemapPath}`);
+    console.log(`Static pages:    ${metadata.pages.static}`);
+    console.log(`Category pages:  ${metadata.pages.category}  ← /jobs/category/*`);
+    console.log(`Location pages:  ${metadata.pages.location}  ← /jobs/location/*`);
+    console.log(`Job pages:       ${metadata.pages.jobs}`);
+    console.log(`Total URLs:      ${metadata.pages.total}`);
+    console.log(`Sitemap size:    ${metadata.sitemapSizeKB} KB`);
+    console.log(`Saved to:        ${sitemapPath}`);
+    console.log("\n⚡ Next step: submit https://hiredup.me/sitemap.xml to Google Search Console");
   } catch (error) {
     console.error("\n=== ERROR ===");
     console.error(error.message);
